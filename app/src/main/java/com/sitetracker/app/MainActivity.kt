@@ -122,8 +122,11 @@ class MainActivity : AppCompatActivity() {
         if (appData.projects.isEmpty()) {
             layout.addView(TextView(this).apply { text = "⚠️ أضف مشروعاً أولاً"; setTextColor(0xFFff6b35.toInt()); gravity = android.view.Gravity.CENTER; setPadding(0, 40, 0, 0) })
         } else {
-            val addBtn = Button(this).apply { text = "➕ موقع جديد"; setTextColor(0xFF000000.toInt()); setBackgroundColor(0xFF00c9ff.toInt()); setOnClickListener { showAddSiteDialog() } }
-            layout.addView(addBtn)
+            val buttonsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 8, 0, 0) } }
+            val addBtn = Button(this).apply { text = "➕ موقع جديد"; setTextColor(0xFF000000.toInt()); setBackgroundColor(0xFF00c9ff.toInt()); layoutParams = LinearLayout.LayoutParams(0, -2, 1f); setOnClickListener { showAddSiteDialog() } }
+            val mapAllBtn = Button(this).apply { text = "🗺️ مشاهدة الجميع"; setTextColor(0xFF000000.toInt()); setBackgroundColor(0xFF00e676.toInt()); layoutParams = LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = 8 }; setOnClickListener { viewAllSitesOnMap() } }
+            buttonsRow.addView(addBtn); buttonsRow.addView(mapAllBtn)
+            layout.addView(buttonsRow)
             if (appData.sites.isEmpty()) {
                 layout.addView(TextView(this).apply { text = "لا توجد مواقع بعد"; setTextColor(0xFF8899bb.toInt()); gravity = android.view.Gravity.CENTER; setPadding(0, 40, 0, 0) })
             } else {
@@ -194,19 +197,41 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "اسمح بالوصول للموقع", Toast.LENGTH_SHORT).show(); return
         }
         Toast.makeText(this, "⏳ جاري تحديد موقعك...", Toast.LENGTH_SHORT).show()
-        locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0f, { loc ->
-            val R = 6371000.0
-            val dLat = Math.toRadians(s.lat - loc.latitude); val dLon = Math.toRadians(s.lng - loc.longitude)
-            val a = sin(dLat/2).pow(2) + cos(Math.toRadians(loc.latitude)) * cos(Math.toRadians(s.lat)) * sin(dLon/2).pow(2)
-            val dist = R * 2 * atan2(sqrt(a), sqrt(1-a))
-            val distStr = if (dist < 1000) "${dist.toInt()} متر" else "${"%.2f".format(dist/1000)} كيلومتر"
-            runOnUiThread { AlertDialog.Builder(this).setTitle("📏 المسافة إلى ${s.name}").setMessage("المسافة: $distStr").setPositiveButton("حسناً", null).show() }
-        })
+        val listener = object : android.location.LocationListener {
+            override fun onLocationChanged(loc: android.location.Location) {
+                locationManager.removeUpdates(this)
+                val R = 6371000.0
+                val dLat = Math.toRadians(s.lat - loc.latitude); val dLon = Math.toRadians(s.lng - loc.longitude)
+                val a = sin(dLat/2).pow(2) + cos(Math.toRadians(loc.latitude)) * cos(Math.toRadians(s.lat)) * sin(dLon/2).pow(2)
+                val dist = R * 2 * atan2(sqrt(a), sqrt(1-a))
+                val distStr = if (dist < 1000) "${dist.toInt()} متر" else "${"%.2f".format(dist/1000)} كيلومتر"
+                runOnUiThread { AlertDialog.Builder(this@MainActivity).setTitle("📏 المسافة إلى ${s.name}").setMessage("المسافة: $distStr").setPositiveButton("حسناً", null).show() }
+            }
+            override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+        }
+        locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0f, listener)
     }
 
     private fun shareSite(s: Site, proj: Project?) {
         val text = "📍 ${s.name}\n🏗️ ${proj?.name ?: ""}\n🌐 ${String.format("%.6f", s.lat)}, ${String.format("%.6f", s.lng)}\n🛰️ ${s.sats} أقمار | ± ${s.acc.toInt()}م\n📝 ${s.notes}\n\nhttps://maps.google.com/?q=${s.lat},${s.lng}"
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, text) }, "مشاركة الموقع"))
+    }
+
+    private fun viewAllSitesOnMap() {
+        if (appData.sites.isEmpty()) {
+            Toast.makeText(this, "لا توجد مواقع لعرضها", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val sb = StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<kml xmlns=\"http://www.opengis.net/kml/2.2\">\n<Document>\n<name>المواقع</name>\n")
+        appData.sites.forEach { s ->
+            sb.append("<Placemark><name>${s.name.replace("<", "&lt;").replace(">", "&gt;").replace("&", "&amp;")}</name><Point><coordinates>${s.lng},${s.lat},${s.alt}</coordinates></Point></Placemark>\n")
+        }
+        sb.append("</Document>\n</kml>")
+        val file = File(cacheDir, "sites.kml"); file.writeText(sb.toString())
+        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.provider", file)
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_VIEW).apply { setDataAndType(uri, "application/vnd.google-earth.kml+xml"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "مشاهدة على الخريطة"))
     }
 
     private fun showExport() {
