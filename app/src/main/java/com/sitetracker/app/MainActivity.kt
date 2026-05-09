@@ -65,7 +65,7 @@ class MainActivity : AppCompatActivity() {
             textSize = 14f; setTextColor(0xFF00e676.toInt()); gravity = android.view.Gravity.CENTER; setPadding(0, 0, 0, 40)
         }
         layout.addView(title); layout.addView(sub); layout.addView(stats)
-        listOf("🏗️ إدارة المشاريع" to ::showProjects, "📍 إدارة المواقع" to ::showSites, "📤 تصدير واستيراد" to ::showExport).forEach { (label, action) ->
+        listOf("🏗️ إدارة المشاريع" to ::showProjects, "📍 إدارة المواقع" to ::showSites, "🗺️ خريطة المواقع" to ::showMap, "📤 تصدير واستيراد" to ::showExport).forEach { (label, action) ->
             val btn = Button(this).apply {
                 text = label; textSize = 16f; setTextColor(0xFFFFFFFF.toInt())
                 setBackgroundColor(0xFF1a2235.toInt()); setPadding(20, 20, 20, 20)
@@ -75,6 +75,70 @@ class MainActivity : AppCompatActivity() {
             layout.addView(btn)
         }
         setContentView(ScrollView(this).apply { addView(layout); setBackgroundColor(0xFF0a0f1e.toInt()) })
+    }
+
+    private fun showMap() {
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xFF0a0f1e.toInt()) }
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(30, 40, 30, 20); setBackgroundColor(0xFF111827.toInt()) }
+        val back = Button(this).apply { text = "← رجوع"; setTextColor(0xFF00c9ff.toInt()); setBackgroundColor(0xFF1a2235.toInt()); setOnClickListener { showMainMenu() } }
+        val title = TextView(this).apply { text = "🗺️ خريطة المواقع"; textSize = 20f; setTextColor(0xFFe8f0fe.toInt()); setPadding(20, 0, 0, 0); gravity = android.view.Gravity.CENTER_VERTICAL }
+        header.addView(back); header.addView(title)
+        layout.addView(header)
+
+        val webView = android.webkit.WebView(this).apply {
+            settings.javaScriptEnabled = true
+            layoutParams = LinearLayout.LayoutParams(-1, -1)
+        }
+
+        if (appData.sites.isEmpty()) {
+            layout.addView(TextView(this).apply { text = "لا توجد مواقع لعرضها"; setTextColor(0xFF8899bb.toInt()); gravity = android.view.Gravity.CENTER; setPadding(0, 40, 0, 0) })
+        } else {
+            val sitesJson = gson.toJson(appData.sites.map { s ->
+                val p = appData.projects.find { it.id == s.projectId }
+                mapOf("name" to s.name, "proj" to (p?.name ?: "—"), "lat" to s.lat, "lng" to s.lng)
+            })
+            val html = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+                    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+                    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+                    <style>
+                        body { padding: 0; margin: 0; }
+                        html, body, #map { height: 100%; width: 100vw; }
+                    </style>
+                </head>
+                <body>
+                    <div id="map"></div>
+                    <script>
+                        var map = L.map('map').setView([${appData.sites.first().lat}, ${appData.sites.first().lng}], 13);
+                        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                            maxZoom: 19,
+                            attribution: '© OpenStreetMap'
+                        }).addTo(map);
+
+                        var sites = $sitesJson;
+                        var bounds = [];
+
+                        sites.forEach(function(site) {
+                            var marker = L.marker([site.lat, site.lng]).addTo(map);
+                            marker.bindPopup("<b>" + site.name + "</b><br>🏗️ " + site.proj);
+                            bounds.push([site.lat, site.lng]);
+                        });
+
+                        if (bounds.length > 0) {
+                            map.fitBounds(bounds);
+                        }
+                    </script>
+                </body>
+                </html>
+            """.trimIndent()
+            webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+            layout.addView(webView)
+        }
+        setContentView(layout)
     }
 
     private fun showProjects() {
@@ -138,7 +202,14 @@ class MainActivity : AppCompatActivity() {
                     row.addView(Button(this).apply { text = "🗺️ خرائط"; textSize = 11f; setTextColor(0xFFFFFFFF.toInt()); setBackgroundColor(0xFF1a2235.toInt()); setOnClickListener { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com/?q=${s.lat},${s.lng}"))) } })
                     row.addView(Button(this).apply { text = "📏 مسافة"; textSize = 11f; setTextColor(0xFFFFFFFF.toInt()); setBackgroundColor(0xFF1a2235.toInt()); setOnClickListener { measureDistance(s) } })
                     row.addView(Button(this).apply { text = "🔗 مشاركة"; textSize = 11f; setTextColor(0xFFFFFFFF.toInt()); setBackgroundColor(0xFF1a2235.toInt()); setOnClickListener { shareSite(s, proj) } })
-                    row.addView(Button(this).apply { text = "🗑️"; textSize = 11f; setTextColor(0xFFff6b35.toInt()); setBackgroundColor(0xFF1a2235.toInt()); setOnClickListener { appData.sites.remove(s); saveData(); showSites() } })
+                    row.addView(Button(this).apply { text = "🗑️"; textSize = 11f; setTextColor(0xFFff6b35.toInt()); setBackgroundColor(0xFF1a2235.toInt()); setOnClickListener {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("حذف الموقع")
+                            .setMessage("هل أنت متأكد من حذف موقع ${s.name}؟")
+                            .setPositiveButton("حذف") { _, _ -> appData.sites.remove(s); saveData(); showSites() }
+                            .setNegativeButton("إلغاء", null)
+                            .show()
+                    } })
                     card.addView(row); layout.addView(card)
                 }
             }
@@ -194,14 +265,20 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "اسمح بالوصول للموقع", Toast.LENGTH_SHORT).show(); return
         }
         Toast.makeText(this, "⏳ جاري تحديد موقعك...", Toast.LENGTH_SHORT).show()
-        locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0f, { loc ->
+
+        var locationListener: android.location.LocationListener? = null
+        locationListener = android.location.LocationListener { loc ->
             val R = 6371000.0
             val dLat = Math.toRadians(s.lat - loc.latitude); val dLon = Math.toRadians(s.lng - loc.longitude)
             val a = sin(dLat/2).pow(2) + cos(Math.toRadians(loc.latitude)) * cos(Math.toRadians(s.lat)) * sin(dLon/2).pow(2)
             val dist = R * 2 * atan2(sqrt(a), sqrt(1-a))
             val distStr = if (dist < 1000) "${dist.toInt()} متر" else "${"%.2f".format(dist/1000)} كيلومتر"
             runOnUiThread { AlertDialog.Builder(this).setTitle("📏 المسافة إلى ${s.name}").setMessage("المسافة: $distStr").setPositiveButton("حسناً", null).show() }
-        })
+
+            locationListener?.let { locationManager.removeUpdates(it) }
+        }
+
+        locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0f, locationListener)
     }
 
     private fun shareSite(s: Site, proj: Project?) {
@@ -228,19 +305,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun exportJSON() {
-        val json = gson.toJson(mapOf("projects" to appData.projects, "sites" to appData.sites, "exportedAt" to Date().toString(), "app" to "SiteTracker"))
-        val file = File(cacheDir, "sitetracker_export.json"); file.writeText(json)
-        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.provider", file)
-        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "application/json"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "تصدير البيانات"))
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, "sitetracker_export.json")
+        }
+        startActivityForResult(intent, 101)
     }
 
     private fun exportCSV() {
-        val sb = StringBuilder("\uFEFF")
-        sb.appendLine("المشروع,اسم الموقع,خط العرض,خط الطول,الارتفاع,الدقة,الأقمار,الملاحظات,التاريخ")
-        appData.sites.forEach { s -> val p = appData.projects.find { it.id == s.projectId }; sb.appendLine("\"${p?.name}\",\"${s.name}\",${s.lat},${s.lng},${s.alt},${s.acc},${s.sats},\"${s.notes}\",${s.createdAt}") }
-        val file = File(cacheDir, "sitetracker.csv"); file.writeText(sb.toString())
-        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.provider", file)
-        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/csv"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "تصدير Excel"))
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "text/csv"
+            putExtra(Intent.EXTRA_TITLE, "sitetracker.csv")
+        }
+        startActivityForResult(intent, 102)
     }
 
     private fun importJSON() {
@@ -267,6 +346,32 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "✅ تم استيراد ${newP.size} مشروع و${newS.size} موقع", Toast.LENGTH_LONG).show()
                 showMainMenu()
             } catch (e: Exception) { Toast.makeText(this, "❌ خطأ في الملف", Toast.LENGTH_SHORT).show() }
+        } else if (requestCode == 101 && resultCode == RESULT_OK) {
+            data?.data?.let { uri ->
+                try {
+                    contentResolver.openOutputStream(uri)?.use { outputStream ->
+                        val json = gson.toJson(mapOf("projects" to appData.projects, "sites" to appData.sites, "exportedAt" to Date().toString(), "app" to "SiteTracker"))
+                        outputStream.write(json.toByteArray())
+                    }
+                    Toast.makeText(this, "✅ تم تصدير JSON بنجاح", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this, "❌ خطأ في التصدير", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } else if (requestCode == 102 && resultCode == RESULT_OK) {
+            data?.data?.let { uri ->
+                try {
+                    contentResolver.openOutputStream(uri)?.use { outputStream ->
+                        val sb = StringBuilder("\uFEFF")
+                        sb.appendLine("المشروع,اسم الموقع,خط العرض,خط الطول,الارتفاع,الدقة,الأقمار,الملاحظات,التاريخ")
+                        appData.sites.forEach { s -> val p = appData.projects.find { it.id == s.projectId }; sb.appendLine("\"${p?.name}\",\"${s.name}\",${s.lat},${s.lng},${s.alt},${s.acc},${s.sats},\"${s.notes}\",${s.createdAt}") }
+                        outputStream.write(sb.toString().toByteArray())
+                    }
+                    Toast.makeText(this, "✅ تم تصدير CSV بنجاح", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this, "❌ خطأ في التصدير", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
